@@ -1,60 +1,132 @@
 package arrayHelper
 
 import (
-	"runtime"
+	"fmt"
+	"reflect"
 	"sync"
 )
 
-// RemoveFromArray 从切片中移除指定的元素，使用并行处理
-func RemoveFromArray[T comparable](slice []T, element T) []T {
-	numWorkers := runtime.GOMAXPROCS(0)
-	if numWorkers > len(slice) {
-		numWorkers = len(slice)
-	}
-	if numWorkers > 8 { // 限制最大并发数量
-		numWorkers = 8
-	}
+// DeduplicateSlice 移除一维 slice 中的重复元素
+func DeduplicateSlice[T comparable](slice []T) []T {
+	result := make([]T, 0, len(slice))
+	seen := make(map[T]struct{}, len(slice))
 
-	chunkSize := (len(slice) + numWorkers - 1) / numWorkers
-	var wg sync.WaitGroup
-	resultCh := make(chan []T, numWorkers)
-
-	pool := sync.Pool{
-		New: func() interface{} {
-			return make([]T, 0, chunkSize)
-		},
-	}
-
-	// 启动多个 goroutine 处理子切片
-	for i := 0; i < numWorkers; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if end > len(slice) {
-			end = len(slice)
+	for _, elem := range slice {
+		if _, exists := seen[elem]; !exists {
+			seen[elem] = struct{}{}
+			result = append(result, elem)
 		}
-		wg.Add(1)
-		go func(start, end int) {
+	}
+	return result
+}
+
+// DeduplicateNDimSlice 移除 N 维 slice 中的重复元素，线程安全
+func DeduplicateNDimSlice(slice interface{}) interface{} {
+	val := reflect.ValueOf(slice)
+	if val.Kind() != reflect.Slice {
+		panic("输入必须是 slice 类型")
+	}
+
+	seen := sync.Map{}
+	ch := make(chan reflect.Value, val.Len())
+	var wg sync.WaitGroup
+
+	wg.Add(val.Len())
+	for i := 0; i < val.Len(); i++ {
+		go func(index int) {
 			defer wg.Done()
-			var newSubSlice []T
-			for _, item := range slice[start:end] {
-				if item != element {
-					newSubSlice = append(newSubSlice, item)
+			elem := val.Index(index)
+			key := generateKey(elem.Interface())
+			if _, loaded := seen.LoadOrStore(key, struct{}{}); !loaded {
+				ch <- elem
+			}
+		}(i)
+	}
+
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	result := reflect.MakeSlice(val.Type(), 0, val.Len())
+	for elem := range ch {
+		result = reflect.Append(result, elem)
+	}
+
+	return result.Interface()
+}
+
+// RemoveFromArray 兼容老函数名称
+func RemoveFromArray[T comparable](slice []T, element T) []T {
+	return RemoveElementSlice(slice, element)
+}
+
+// RemoveElementSlice 从一维 slice 中移除指定元素，线程安全
+func RemoveElementSlice[T comparable](slice []T, element T) []T {
+	result := make([]T, 0, len(slice))
+	for _, elem := range slice {
+		if elem != element {
+			result = append(result, elem)
+		}
+	}
+	return result
+}
+
+// RemoveElementNDimSlice 从 N 维 slice 中移除指定元素，线程安全
+func RemoveElementNDimSlice(slice interface{}, element interface{}) interface{} {
+	val := reflect.ValueOf(slice)
+	if val.Kind() != reflect.Slice {
+		panic("输入必须是 slice 类型")
+	}
+
+	ch := make(chan reflect.Value, val.Len())
+	var wg sync.WaitGroup
+
+	wg.Add(val.Len())
+	for i := 0; i < val.Len(); i++ {
+		go func(index int) {
+			defer wg.Done()
+			elem := val.Index(index)
+			if isNestedSlice(elem) {
+				nestedResult := RemoveElementNDimSlice(elem.Interface(), element)
+				ch <- reflect.ValueOf(nestedResult)
+			} else {
+				if !reflect.DeepEqual(elem.Interface(), element) {
+					ch <- elem
 				}
 			}
-			pool.Put(newSubSlice[:0]) // 清空切片并放回池中
-			resultCh <- newSubSlice
-		}(start, end)
+		}(i)
 	}
 
-	// 等待所有 goroutine 完成
-	wg.Wait()
-	close(resultCh)
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
 
-	// 合并结果
-	var result []T
-	for subResult := range resultCh {
-		result = append(result, subResult...)
+	result := reflect.MakeSlice(val.Type(), 0, val.Len())
+	for elem := range ch {
+		result = reflect.Append(result, elem)
 	}
 
-	return result
+	return result.Interface()
+}
+
+// generateKey 为任意类型生成唯一键，保证线程安全的去重逻辑
+func generateKey(value interface{}) string {
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.Slice:
+		var keys []string
+		for i := 0; i < val.Len(); i++ {
+			keys = append(keys, generateKey(val.Index(i).Interface()))
+		}
+		return fmt.Sprintf("%v", keys)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+// isNestedSlice 判断值是否是嵌套的 slice
+func isNestedSlice(val reflect.Value) bool {
+	return val.Kind() == reflect.Slice
 }
