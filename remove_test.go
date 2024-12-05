@@ -13,6 +13,18 @@ func TestRemoveFromArray(t *testing.T) {
 	log.Println(RemoveFromArray(slice, element))
 }
 
+func TestRemoveElementNDimSlice(t *testing.T) {
+	log.Println("删除指定值")
+	// 定义一个多维 slice
+	multiDimSlice := [][]int{
+		{1, 2, 3, 4},
+		{5, 3, 7, 8},
+		{9, 10, 3, 11},
+	}
+	element := 5
+	log.Println(RemoveElementNDimSlice(multiDimSlice, element))
+}
+
 func TestDeduplicateSlice(t *testing.T) {
 	log.Println("一维 slice 去重")
 	slice1D := []int{1, 2, 2, 3, 4, 4, 5}

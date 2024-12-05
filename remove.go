@@ -20,11 +20,11 @@ func DeduplicateSlice[T comparable](slice []T) []T {
 	return result
 }
 
-// DeduplicateNDimSlice 移除 N 维 slice 中的重复元素，线程安全
-func DeduplicateNDimSlice(slice interface{}) interface{} {
+// DeduplicateNDimSlice 移除 N 维泛型 slice/数组中的重复元素，线程安全
+func DeduplicateNDimSlice[T any](slice []T) []T {
 	val := reflect.ValueOf(slice)
-	if val.Kind() != reflect.Slice {
-		panic("输入必须是 slice 类型")
+	if val.Kind() != reflect.Slice && val.Kind() != reflect.Array {
+		panic("输入必须是 slice 或 array 类型")
 	}
 
 	seen := sync.Map{}
@@ -48,12 +48,12 @@ func DeduplicateNDimSlice(slice interface{}) interface{} {
 		close(ch)
 	}()
 
-	result := reflect.MakeSlice(val.Type(), 0, val.Len())
+	result := reflect.MakeSlice(reflect.TypeOf(slice), 0, val.Len())
 	for elem := range ch {
 		result = reflect.Append(result, elem)
 	}
 
-	return result.Interface()
+	return result.Interface().([]T)
 }
 
 // RemoveFromArray 兼容老函数名称
@@ -115,7 +115,7 @@ func RemoveElementNDimSlice(slice interface{}, element interface{}) interface{} 
 func generateKey(value interface{}) string {
 	val := reflect.ValueOf(value)
 	switch val.Kind() {
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		var keys []string
 		for i := 0; i < val.Len(); i++ {
 			keys = append(keys, generateKey(val.Index(i).Interface()))
